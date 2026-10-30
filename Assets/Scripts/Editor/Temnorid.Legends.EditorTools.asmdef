@@ -1,0 +1,23 @@
+{
+  "name": "Temnorid.Legends.EditorTools",
+  "rootNamespace": "Temnorid.Legends.EditorTools",
+  "references": [
+    "Temnorid.Legends",
+    "Unity.AI.Navigation",
+    "ITKamianets.Engine.Combat",
+    "ITKamianets.Engine.Feedback",
+    "ITKamianets.Engine.Graybox",
+    "ITKamianets.Engine.Graybox.Editor"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": false,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

@@ -1,0 +1,21 @@
+{
+  "name": "Temnorid.Legends.Tests.PlayMode",
+  "rootNamespace": "Temnorid.Legends.Tests",
+  "references": [
+    "Temnorid.Legends",
+    "ITKamianets.Engine.Inventory",
+    "ITKamianets.Engine.Combat",
+    
+    "UnityEngine.TestRunner",
+    "UnityEditor.TestRunner"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": true,
+  "precompiledReferences": ["nunit.framework.dll"],
+  "autoReferenced": false,
+  "defineConstraints": ["UNITY_INCLUDE_TESTS"],
+  "versionDefines": [],
+  "noEngineReferences": false
+}
