@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+ <rect width="1200" height="630" fill="#0f0d14"/><path d="M0 6H1200" stroke="#d9863a" stroke-width="12"/>
+ <g font-family="Segoe UI, Arial, sans-serif" fill="#e9e6f0">
+ <text x="72" y="105" font-size="26" font-weight="700" letter-spacing="5">TEMNORID</text>
+ <text x="72" y="151" font-size="24" fill="#e7b485">Stories in a dark world</text>
+ <text x="72" y="285" font-size="96" font-weight="700" letter-spacing="-3">Legends</text>
+ <text x="74" y="438" font-size="29" fill="#e7b485">Explore · Fight · Uncover</text>
+ <path d="M72 514H1128" stroke="#2d2838" stroke-width="2"/>
+ <text x="72" y="566" font-size="24" fill="#a9a3b8">legends.temnorid.com</text>
+ <text x="1128" y="566" font-size="24" text-anchor="end" fill="#a9a3b8">A Temnorid game</text>
+ </g><g transform="translate(800 148) scale(2.35)"><path d="M64 13C83 29 95 43 92 58 89 74 78 82 64 82 46 82 33 69 36 53 39 42 46 37 48 27 57 36 53 43 59 44 70 44 58 25 64 13Z" fill="#d9863a"/><path d="M65 42C77 55 81 66 72 73 62 80 50 70 55 60 61 66 66 62 65 55Z" fill="#e7b485"/><path d="M46 82H82L78 94H50Z" fill="#e7b485"/><path d="M54 94H74L69 116H59Z" fill="#d9863a"/><path d="M54 101H73M56 108H71" stroke="#875324" stroke-width="4"/></g></svg>
