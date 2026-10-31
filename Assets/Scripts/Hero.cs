@@ -12,7 +12,7 @@ namespace Temnorid.Legends
 	/// around by surprise; in a fight he walks relative to the free camera.
 	/// </summary>
 	[RequireComponent(typeof(CharacterController), typeof(Health))]
-	public sealed class Hero : MonoBehaviour
+	public sealed class Hero : MonoBehaviour, IPrey
 	{
 		public LegendsGame Game;
 		public CameraRig Rig;
@@ -27,6 +27,13 @@ namespace Temnorid.Legends
 		public bool Rolling => _rollLeft > 0f;
 		public bool Invulnerable => Rolling && Fighting.RollSeconds - _rollLeft < Fighting.RollInvulnerableSeconds;
 		public bool Swinging => _swingLeft > 0f;
+
+		Vector3 IPrey.Position => transform.position;
+		bool IPrey.Alive => Health != null && Health.IsAlive;
+		void IPrey.Strike(float amount, Vector3 from, float blockStrength) => TakeHit(amount, from, blockStrength);
+
+		/// <summary>Speed on the ground, for the other player's picture of this hero.</summary>
+		public float GroundSpeed => _body != null ? new Vector3(_body.velocity.x, 0f, _body.velocity.z).magnitude : 0f;
 
 		/// <summary>Raised when a blow lands, is blocked or is dodged.</summary>
 		public event Action<HitResult, float> Struck;
@@ -51,6 +58,9 @@ namespace Temnorid.Legends
 		/// <summary>Block state to use instead of the key. Tests and bots set it; null means read the key.</summary>
 		public bool? BlockOverride;
 
+		/// <summary>Run state to use instead of the key (a touch stick pushed all the way). Null means read the key.</summary>
+		public bool? SprintOverride;
+
 		bool _rollRequested;
 		bool _swingRequested;
 
@@ -60,9 +70,16 @@ namespace Temnorid.Legends
 		/// <summary>Asks for a swing on the next frame, as if the button were pressed. Used by bots.</summary>
 		public void RequestSwing() => _swingRequested = true;
 
+		void OnEnable()
+		{
+			if (!Foe.Prey.Contains(this)) Foe.Prey.Add(this);
+		}
+
+		void OnDisable() => Foe.Prey.Remove(this);
+
 		void Awake()
 		{
-			Health = GetComponent<Health>();
+Health = GetComponent<Health>();
 			_body = GetComponent<CharacterController>();
 			_safe = transform.position;
 			if (Torch != null) _torchBase = Torch.intensity;
@@ -100,7 +117,7 @@ namespace Temnorid.Legends
 			}
 			else if (!Swinging)
 			{
-				var running = actions.Sprint.IsPressed();
+				var running = SprintOverride ?? actions.Sprint.IsPressed();
 				var speed = Blocking ? 1.6f : combat ? (running ? 4.6f : 3.4f) : (running ? 5.4f : 3.2f);
 				velocity = heading * speed;
 				if (Blocking && combat) FaceYaw(cameraYaw, 14f * dt);
@@ -154,7 +171,8 @@ namespace Temnorid.Legends
 			var direction = AimDirection();
 			transform.rotation = Quaternion.LookRotation(direction);
 			var origin = transform.position;
-			CombatQueries.DamageInCone(origin, direction, Fighting.SwordRange, Fighting.SwordHalfAngle, Health.Team, new DamageInfo(Fighting.SwordDamage, gameObject, origin, "sword"));
+			if (Game != null && Game.Net != null && Game.Net.IsClient) Game.Net.SendHit(direction);
+			else CombatQueries.DamageInCone(origin, direction, Fighting.SwordRange, Fighting.SwordHalfAngle, Health.Team, new DamageInfo(Fighting.SwordDamage, gameObject, origin, "sword"));
 			Fx.Pulse(PrimitiveType.Cube, origin + Vector3.up * 1.1f + direction * 1.4f, Quaternion.LookRotation(direction) * Quaternion.Euler(0f, 0f, 25f),
 				new Vector3(0.3f, 0.06f, 0.5f), new Vector3(2.4f, 0.06f, 0.5f), new Color(1f, 0.95f, 0.75f), 0.14f);
 			return true;
@@ -201,6 +219,13 @@ namespace Temnorid.Legends
 		{
 			Health.Heal(amount);
 			Fx.Pulse(PrimitiveType.Sphere, transform.position + Vector3.up * 1.0f, Quaternion.identity, Vector3.one * 0.4f, Vector3.one * 1.6f, new Color(0.3f, 1f, 0.5f), 0.4f);
+		}
+
+		/// <summary>Stands the hero up again at a place with full health, as after a respawn.</summary>
+		public void Revive(Vector3 position, float yaw)
+		{
+			Health.Restore();
+			Teleport(position, yaw);
 		}
 
 		public void SetTorch(bool on)

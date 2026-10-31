@@ -3,6 +3,8 @@ using System.Collections;
 using ITKamianets.Engine.Combat;
 using ITKamianets.Engine.Core;
 using ITKamianets.Engine.Input;
+using ITKamianets.Engine.Net;
+using ITKamianets.Engine.Shell;
 using Unity.AI.Navigation;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -39,6 +41,12 @@ namespace Temnorid.Legends
 
 		public static LegendsGame Instance { get; private set; }
 
+		/// <summary>Shows the touch controls and touch wording even where there is no touch screen. Tests set it.</summary>
+		public static bool ForceTouch;
+
+		/// <summary>True on phones and tablets: no keyboard or mouse to count on.</summary>
+		public static bool TouchUi => Application.isMobilePlatform || ForceTouch;
+
 		[Header("Scene")]
 		public Hero Hero;
 		public CameraRig Rig;
@@ -54,6 +62,15 @@ namespace Temnorid.Legends
 
 		public bool SaveEnabled = true;
 
+		/// <summary>The link to the other player. Null offline, and a single player behaves exactly as before.</summary>
+		public LegendsNet Net { get; private set; }
+
+		/// <summary>True once the story has been started (on a guest: once the host has started it).</summary>
+		public bool Begun => Phase != LegendsPhase.Menu;
+
+		/// <summary>A shell screen (the profile) is open over the game: the hero stands still.</summary>
+		public bool Overlay { get; private set; }
+
 		const string Log = "Legends";
 		const float DungeonX = 150f;
 
@@ -66,6 +83,10 @@ namespace Temnorid.Legends
 		Action _afterDialogue;
 		float _combatHold;
 		float _promptUntilDark;
+		float _respawnAt;
+		ulong _actor;
+		bool _mine = true;
+		bool _worldApplied;
 		bool _darkWarned;
 
 		public LegendsSession Session { get; private set; }
@@ -89,7 +110,7 @@ namespace Temnorid.Legends
 		public bool InCombat => Phase == LegendsPhase.Playing && _combatHold > 0f;
 
 		/// <summary>True when the player may move the hero.</summary>
-		public bool CanControl => Phase == LegendsPhase.Playing && !Paused && !InventoryOpen;
+		public bool CanControl => Phase == LegendsPhase.Playing && !Paused && !InventoryOpen && !Overlay;
 
 		public bool InDungeon => Hero != null && Hero.transform.position.x > DungeonX;
 
@@ -124,6 +145,18 @@ namespace Temnorid.Legends
 			if (Ambusher != null) Ambusher.gameObject.SetActive(true);
 
 			Hero.GetComponent<Health>().Died += OnHeroDied;
+
+			if (NetSession.Instance.IsOnline)
+			{
+				Net = gameObject.AddComponent<LegendsNet>();
+				Net.Init(this);
+				if (Net.IsClient)
+				{
+					// The host's story is the story: nothing of this machine's own save is used or touched.
+					Session.StartNew();
+					HasSave = false;
+				}
+			}
 		}
 
 		void Start()
@@ -131,15 +164,29 @@ namespace Temnorid.Legends
 			RefreshLabels();
 			Place(Session.Checkpoint);
 			ApplyWorld(true);
-			if (AutoContinue)
+			if (AutoContinue && Net == null)
 			{
 				AutoContinue = false;
 				Begin(false);
 			}
 		}
 
-		void OnEnable() => Foe.Killed += OnFoeKilled;
-		void OnDisable() => Foe.Killed -= OnFoeKilled;
+		void OnEnable()
+		{
+			Foe.Killed += OnFoeKilled;
+			ShellFlow.BeforeQuit += OnBeforeQuit;
+		}
+
+		void OnDisable()
+		{
+			Foe.Killed -= OnFoeKilled;
+			ShellFlow.BeforeQuit -= OnBeforeQuit;
+		}
+
+		void OnBeforeQuit()
+		{
+			if (Phase != LegendsPhase.Menu && (Net == null || Net.IsHost)) Save();
+		}
 
 		void OnDestroy()
 		{
@@ -155,6 +202,7 @@ namespace Temnorid.Legends
 		public void Begin(bool newGame)
 		{
 			if (Phase != LegendsPhase.Menu) return;
+			if (Net != null && Net.IsClient) return; // the host starts the story
 			if (newGame)
 			{
 				Session.StartNew();
@@ -165,6 +213,20 @@ namespace Temnorid.Legends
 			Phase = LegendsPhase.Playing;
 			ShowToast(newGame ? "Temnorid Legends: The Abandoned Village" : "Back at the last checkpoint.");
 			EngineLog.Info(Log, newGame ? "New game." : $"Continued from checkpoint {Session.Checkpoint}.");
+			if (Net != null)
+			{
+				Net.Flush();
+				Net.AnnounceBegin();
+			}
+		}
+
+		/// <summary>A guest: the host has started the story. Stands at the shared checkpoint.</summary>
+		public void BeginRemote()
+		{
+			if (Phase != LegendsPhase.Menu) return;
+			Place(Session.Checkpoint);
+			Phase = LegendsPhase.Playing;
+			ShowToast("You join the other hero in the village.");
 		}
 
 		void Place(int checkpoint)
@@ -177,9 +239,11 @@ namespace Temnorid.Legends
 
 		public void SetCheckpoint(int index)
 		{
+			if (Net != null && Net.IsClient) return; // only the host keeps the checkpoints
 			Session.SetCheckpoint(index);
 			Save();
-			ShowToast("Checkpoint saved.");
+			Net?.MarkDirty();
+			Announce("Checkpoint saved.");
 			EngineLog.Info(Log, $"Checkpoint {index}.");
 		}
 
@@ -189,7 +253,8 @@ namespace Temnorid.Legends
 			if (_scene != null) StopCoroutine(_scene);
 			_scene = null;
 			Phase = LegendsPhase.Dead;
-			Rig.SetMode(CameraMode.Exploration);
+			_respawnAt = Time.unscaledTime + 4f;
+Rig.SetMode(CameraMode.Exploration);
 			EngineLog.Info(Log, "The hero died.");
 		}
 
@@ -201,11 +266,23 @@ namespace Temnorid.Legends
 			SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
 		}
 
+		/// <summary>Online, a fallen hero gets up at the shared checkpoint, so nobody waits forever.</summary>
+		void Respawn()
+		{
+			var spot = Checkpoints[Mathf.Clamp(Session.Checkpoint, 0, Checkpoints.Length - 1)];
+			Hero.Revive(spot.position, spot.eulerAngles.y);
+			Phase = LegendsPhase.Playing;
+			Rig.SetMode(CameraMode.Exploration);
+			Rig.Snap();
+			ShowToast("You rise again at the last checkpoint.");
+		}
+
+		/// <summary>Leaves for the shell's menu, saving first.</summary>
 		public void BackToMenu()
 		{
 			AutoContinue = false;
 			Time.timeScale = 1f;
-			SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
+			ShellFlow.QuitToMenu();
 		}
 
 		public void Save()
@@ -227,7 +304,22 @@ namespace Temnorid.Legends
 		{
 			if (Phase != LegendsPhase.Playing && !Paused) return;
 			Paused = paused;
-			Time.timeScale = paused ? 0f : 1f;
+			// Online the world belongs to the host and keeps running: a pause is only a menu.
+			Time.timeScale = Net == null && (paused || Overlay) ? 0f : 1f;
+			}
+
+			/// <summary>A shell screen (the profile) opens or closes over the game.</summary>
+			public void SetOverlay(bool open)
+			{
+				Overlay = open;
+				if (Net == null) Time.timeScale = open || Paused ? 0f : 1f;
+			}
+
+		/// <summary>Opens or closes the journal (the pack and the notes), as the Journal tab does.</summary>
+		public void SetInventory(bool open)
+		{
+			if (open && (Phase != LegendsPhase.Playing || Paused)) return;
+			InventoryOpen = open;
 		}
 
 		public void ToggleInventory()
@@ -240,6 +332,7 @@ namespace Temnorid.Legends
 
 		void Update()
 		{
+			if (Phase == LegendsPhase.Dead && Net != null && Time.unscaledTime >= _respawnAt) Respawn();
 			if (Phase == LegendsPhase.Menu || Phase == LegendsPhase.Ended) { UpdateCursor(); return; }
 			var input = EngineInput.Default;
 
@@ -266,7 +359,8 @@ namespace Temnorid.Legends
 		void UpdatePlaying(EngineInput input)
 		{
 			var engaged = false;
-			foreach (var foe in Foe.All) if (foe.Engaged) engaged = true;
+			foreach (var foe in Foe.All)
+				if (foe.Engaged && (Net == null || (foe.transform.position - Hero.transform.position).magnitude < 30f)) engaged = true;
 			if (engaged) _combatHold = 1.4f;
 			else if (_combatHold > 0f) _combatHold -= Time.deltaTime;
 			Rig.SetMode(InCombat ? CameraMode.Combat : CameraMode.Exploration);
@@ -276,13 +370,23 @@ namespace Temnorid.Legends
 			if (_heal.WasPressedThisFrame()) UseHeal();
 
 			var near = InCombat ? null : Interactable.Nearest(Hero.transform.position, Hero.transform.forward, 2.4f);
-			Prompt = near != null ? $"E: {near.Prompt}" : "";
+			Prompt = near != null ? $"{(TouchUi ? "Use" : "E")}: {near.Prompt}" : "";
 			if (near != null && input.Player.Interact.WasPressedThisFrame()) OnInteract(near);
+		}
+
+		/// <summary>Uses the nearest thing in reach, as the interact key does. The touch Use button calls this.</summary>
+		public bool TryInteract()
+		{
+			if (!CanControl || InCombat) return false;
+			var near = Interactable.Nearest(Hero.transform.position, Hero.transform.forward, 2.4f);
+			if (near == null) return false;
+			OnInteract(near);
+			return true;
 		}
 
 		void UpdateCursor()
 		{
-			var lockIt = InCombat && !Paused && !InventoryOpen;
+			var lockIt = !Application.isMobilePlatform && InCombat && !Paused && !InventoryOpen;
 			Cursor.lockState = lockIt ? CursorLockMode.Locked : CursorLockMode.None;
 			Cursor.visible = !lockIt;
 		}
@@ -312,7 +416,12 @@ namespace Temnorid.Legends
 				return false;
 			}
 			Hero.Heal(Fighting.PotionHeal);
-			ShowToast("You drink a healing potion.");
+			if (Net != null)
+			{
+				if (Net.IsClient) Net.SendPotion();
+				else Net.MarkDirty();
+			}
+ShowToast("You drink a healing potion.");
 			return true;
 		}
 
@@ -321,10 +430,66 @@ namespace Temnorid.Legends
 		/// <summary>The hero uses something. Public so tests can play the story.</summary>
 		public void OnInteract(Interactable item)
 		{
+			if (Net != null && Net.IsClient)
+			{
+				InteractAsGuest(item);
+				return;
+			}
+			Interact(item, false, 0UL, true);
+		}
+
+		/// <summary>A guest shows what it can at once (a document, a conversation) and asks the host to change the shared story.</summary>
+		void InteractAsGuest(Interactable item)
+		{
 			switch (item.Kind)
 			{
 				case InteractKind.Note:
 					Read(Story.Note(item.Id));
+					Net.SendUse(item.Id);
+					break;
+				case InteractKind.Talk:
+					if (Session.State.Has("talked:" + item.Id))
+					{
+						ShowToast("He has nothing more to say.");
+						break;
+					}
+					StartDialogue("Wounded villager", Story.VillagerLines, () =>
+					{
+						Net.SendUse(item.Id + "|done");
+						Play(WindowScene());
+					});
+					break;
+				default:
+					Net.SendUse(item.Id);
+					break;
+			}
+		}
+
+		/// <summary>Host: the other player's hero uses something (already checked for distance).</summary>
+		public void HostUse(Interactable item, bool done, ulong who) => Interact(item, done, who, false);
+
+		void Tell(string text)
+		{
+			if (_mine) ShowToast(text);
+			else Net?.ToastTo(_actor, text);
+		}
+
+		/// <summary>A line everybody sees.</summary>
+		void Announce(string text)
+		{
+			ShowToast(text);
+			if (Net != null && Net.IsHost) Net.ToastAll(text);
+		}
+
+		void Interact(Interactable item, bool done, ulong who, bool mine)
+		{
+			_actor = who;
+			_mine = mine;
+			switch (item.Kind)
+			{
+				case InteractKind.Note:
+					if (mine) Read(Story.Note(item.Id));
+					else Session.State.Set("note:" + item.Id);
 					break;
 				case InteractKind.Pickup:
 					Pick(item);
@@ -332,15 +497,16 @@ namespace Temnorid.Legends
 				case InteractKind.Door:
 					if (!string.IsNullOrEmpty(item.RequiresItem) && !Session.Has(item.RequiresItem))
 					{
-						ShowToast("It is locked.");
+						Tell("It is locked.");
 						break;
 					}
 					Session.State.Set("open:" + item.Id);
 					RefreshGates();
-					ShowToast("The door is unlocked.");
+					Tell("The door is unlocked.");
 					break;
 				case InteractKind.Talk:
-					Talk(item);
+					if (mine) Talk(item);
+					else if (done && !Session.State.Has("talked:" + item.Id)) FinishTalk(item);
 					break;
 				case InteractKind.Panel:
 					Puzzle.Cycle(item.Slot);
@@ -350,24 +516,101 @@ namespace Temnorid.Legends
 						Session.State.Set("puzzle-solved");
 						Session.State.Set("open:basement-door");
 						RefreshGates();
-						ShowToast("The seal breaks. The cellar door swings open.");
+						Announce("The seal breaks. The cellar door swings open.");
 						SetCheckpoint(3);
 					}
+					Net?.MarkDirty();
 					break;
 				case InteractKind.Stairs:
-					if (_scene == null) _scene = StartCoroutine(Descend());
+					if (_scene == null)
+					{
+						if (Net != null) Net.AnnounceScene("descend");
+						PlayAnnounced("descend");
+					}
 					break;
 				case InteractKind.Altar:
-					if (_scene == null && Session.State.Has("done:ritual-room") && !Session.State.Has("done:altar")) Play(BossAwakens());
+					if (_scene == null && Session.State.Has("done:ritual-room") && !Session.State.Has("done:altar"))
+					{
+						if (Net != null) Net.AnnounceScene("altar");
+						Play(BossAwakens());
+					}
 					break;
 				case InteractKind.Artifact:
 					Pick(item);
+					if (_scene == null && Net != null) Net.AnnounceScene("ending");
 					Play(Ending());
+					break;
+			}
+			Net?.MarkDirty();
+		}
+
+		/// <summary>
+		/// A story scene every player sees, started by the host's announcement (and, on the host, by the same call). Each machine
+		/// plays it for its own hero and camera.
+		/// </summary>
+		public void PlayAnnounced(string scene)
+		{
+			switch (scene)
+			{
+				case "ritual":
+					if (Net == null || Phase == LegendsPhase.Playing) Play(RitualScene());
+					break;
+				case "descend":
+					if (Phase == LegendsPhase.Dead) break;
+					ForcePlaying();
+					if (_scene == null) _scene = StartCoroutine(Descend());
+					break;
+				case "altar":
+					if (Net != null && Net.IsClient && Phase != LegendsPhase.Dead && _scene == null)
+					{
+						ForcePlaying();
+						Play(BossView());
+					}
+					break;
+				case "ending":
+					if (Net != null && Net.IsClient && Phase != LegendsPhase.Dead)
+					{
+						ForcePlaying();
+						Play(Ending());
+					}
 					break;
 			}
 		}
 
-		void Read(Note note)
+		void ForcePlaying()
+		{
+			if (Phase != LegendsPhase.Dialogue && Phase != LegendsPhase.Reading) return;
+			Reading = null;
+			_afterDialogue = null;
+			Phase = LegendsPhase.Playing;
+		}
+
+		/// <summary>Host: a guest used a healing potion from the shared pack.</summary>
+		public void HostPotion()
+		{
+			Session.UsePotion();
+			Net?.MarkDirty();
+		}
+
+		/// <summary>Guest: the host's story, the pack and the lock arrive here.</summary>
+		public void ApplyState(LegendsStatePacket packet)
+		{
+			Session.Load(packet.save);
+			if (packet.puzzle != null)
+				for (var i = 0; i < packet.puzzle.Length && i < Puzzle.Current.Length; i++) Puzzle.Current[i] = packet.puzzle[i];
+			RefreshLabels();
+			if (!_worldApplied)
+			{
+				_worldApplied = true;
+				ApplyWorld(true);
+				return;
+			}
+			RefreshGates();
+			foreach (var foe in Foe.All)
+				if (foe.Remote && Session.State.Has("dead:" + foe.Id)) foe.RemoteDie();
+		}
+
+void Read(Note note)
 		{
 			if (note == null) return;
 			Session.State.Set("note:" + note.Id);
@@ -387,7 +630,7 @@ namespace Temnorid.Legends
 			if (!string.IsNullOrEmpty(item.ItemId))
 			{
 				Session.AddItem(item.ItemId, item.Quantity);
-				ShowToast($"Picked up: {Items.Name(item.ItemId)}");
+				Tell($"Picked up: {Items.Name(item.ItemId)}");
 			}
 			RefreshGates();
 		}
@@ -401,15 +644,23 @@ namespace Temnorid.Legends
 			}
 			StartDialogue("Wounded villager", Story.VillagerLines, () =>
 			{
-				Session.State.Set("talked:" + person.Id);
-				Session.AddItem(Items.Potion);
-				Session.State.Set("got:village-potion");
-				ShowToast("Received: Healing potion");
+				_actor = 0UL;
+				_mine = true;
+				FinishTalk(person);
 				Play(WindowScene());
 			});
 		}
 
-		// ---- dialogue ----
+		void FinishTalk(Interactable person)
+		{
+			Session.State.Set("talked:" + person.Id);
+			Session.AddItem(Items.Potion);
+			Session.State.Set("got:village-potion");
+			Tell("Received: Healing potion");
+			Net?.MarkDirty();
+		}
+
+// ---- dialogue ----
 
 		public void StartDialogue(string speaker, string[] lines, Action done)
 		{
@@ -438,21 +689,34 @@ namespace Temnorid.Legends
 
 		// ---- triggers ----
 
-		/// <summary>The hero walked into a story volume. Each runs once.</summary>
+		/// <summary>The hero walked into a story volume. Each runs once. Either hero counts for both.</summary>
 		public void OnTrigger(string id)
 		{
+			if (Net != null && Net.IsClient)
+			{
+				if (!Session.State.Has("done:" + id)) Net.SendTrigger(id);
+				return;
+			}
+			ApplyTrigger(id, true);
+		}
+
+		/// <summary>Host: the other player's hero walked into a story volume.</summary>
+		public void HostTrigger(string id) => ApplyTrigger(id, false);
+
+		void ApplyTrigger(string id, bool local)
+		{
 			var key = "done:" + id;
-			if (Session.State.Has(key) || Phase != LegendsPhase.Playing) return;
+			if (Session.State.Has(key) || (local && Phase != LegendsPhase.Playing)) return;
 			switch (id)
 			{
 				case "village-gate":
 					Session.State.Set(key);
 					SetCheckpoint(1);
-					ShowToast("The village is silent. No smoke, no voices.");
+					Announce("The village is silent. No smoke, no voices.");
 					break;
 				case "square-listen":
 					Session.State.Set(key);
-					ShowToast("You hear knocking from a house nearby.");
+					Announce("You hear knocking from a house nearby.");
 					break;
 				case "street-ambush":
 					if (Session.State.Has("dead:ambush") || Ambusher == null) return;
@@ -462,24 +726,26 @@ namespace Temnorid.Legends
 				case "ritual-room":
 					Session.State.Set(key);
 					SetCheckpoint(5);
-					Play(RitualScene());
+					Net?.AnnounceScene("ritual");
+					PlayAnnounced("ritual");
 					break;
 			}
 			RefreshGates();
 		}
 
-		void OnFoeKilled(Foe foe)
-		{
-			Session.State.Set("dead:" + foe.Id);
+void OnFoeKilled(Foe foe)
+{
+	if (Net != null && Net.IsClient) return;
+Session.State.Set("dead:" + foe.Id);
 			RefreshGates();
 			if (foe.Id == "ambush")
 			{
 				SetCheckpoint(2);
-				ShowToast("The villager falls. Whatever he was, he is gone.");
+				Announce("The villager falls. Whatever he was, he is gone.");
 			}
 			else if (foe.Id == "boss")
 			{
-				ShowToast("The guardian crumbles to dust.");
+				Announce("The guardian crumbles to dust.");
 			}
 		}
 
@@ -546,7 +812,7 @@ namespace Temnorid.Legends
 
 		IEnumerator Ambush()
 		{
-			ShowToast("A villager stands in the street, his back to you.");
+			Announce("A villager stands in the street, his back to you.");
 			yield return Ambusher.TurnToward(Hero.transform.position, 2.2f);
 			Ambusher.Wake(Hero);
 		}
@@ -608,6 +874,16 @@ namespace Temnorid.Legends
 			Boss.Wake(Hero);
 		}
 
+		/// <summary>A guest's view of the guardian rising: the same shot, while the host's guardian climbs out.</summary>
+		IEnumerator BossView()
+		{
+			Hero.transform.rotation = Quaternion.LookRotation(Vector3.ProjectOnPlane(Shot("boss-look").position - Hero.transform.position, Vector3.up));
+			Frame("boss", 60f);
+			Boss.gameObject.SetActive(true);
+			Subtitle("The altar cracks. Something enormous rises.", 4f);
+			yield return new WaitForSeconds(4.6f);
+		}
+
 		IEnumerator Ending()
 		{
 			yield return new WaitForSeconds(0.6f);
@@ -660,7 +936,8 @@ namespace Temnorid.Legends
 
 		void RefreshGates()
 		{
-			foreach (var gate in FindObjectsByType<FlagGate>(FindObjectsInactive.Include, FindObjectsSortMode.None)) gate.Refresh(Session.State);
+			if (Net != null && Net.IsHost) Net.MarkDirty();
+foreach (var gate in FindObjectsByType<FlagGate>(FindObjectsInactive.Include, FindObjectsSortMode.None)) gate.Refresh(Session.State);
 		}
 
 		void RefreshLabels()

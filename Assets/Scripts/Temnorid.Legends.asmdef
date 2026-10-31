@@ -2,6 +2,9 @@
   "name": "Temnorid.Legends",
   "rootNamespace": "Temnorid.Legends",
   "references": [
+    "ITKamianets.Engine.Shell",
+    "ITKamianets.Engine.Net",
+    "ITKamianets.Engine.Update",
     "ITKamianets.Engine.Core",
     "ITKamianets.Engine.Input",
     "ITKamianets.Engine.Save",

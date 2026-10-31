@@ -26,8 +26,16 @@ namespace Temnorid.Legends
 		Dead,
 	}
 
-	enum Shape
+	/// <summary>Something a foe can hunt: the local hero, or another player's hero shown here.</summary>
+	public interface IPrey
 	{
+		Vector3 Position { get; }
+		bool Alive { get; }
+		void Strike(float amount, Vector3 from, float blockStrength);
+	}
+
+	enum Shape
+{
 		/// <summary>A short swing in front.</summary>
 		Swing,
 		/// <summary>A heavy blow from above onto the ground ahead.</summary>
@@ -59,6 +67,9 @@ namespace Temnorid.Legends
 	{
 		public static readonly List<Foe> All = new List<Foe>();
 
+		/// <summary>Every hero a foe may go after. Offline it holds only the player's hero.</summary>
+		public static readonly List<IPrey> Prey = new List<IPrey>();
+
 		/// <summary>Raised when a foe dies.</summary>
 		public static event Action<Foe> Killed;
 
@@ -76,9 +87,21 @@ namespace Temnorid.Legends
 		/// <summary>The attack being prepared, for the screen.</summary>
 		public string CurrentAttack { get; private set; } = "";
 
+		/// <summary>Index of the attack being prepared, or -1.</summary>
+		public int AttackIndex { get; private set; } = -1;
+
+		/// <summary>True on a guest's machine: the host simulates this foe and this copy only shows it.</summary>
+		public bool Remote { get; private set; }
+
+		float _remoteFraction = 1f;
+
+		/// <summary>Health 0 to 1 for the screen: the real one, or what the host last said.</summary>
+		public float HealthFraction => Remote ? _remoteFraction : Health.Fraction;
+
 		NavMeshAgent _agent;
 		Hero _hero;
-		FoeAttack[] _attacks;
+		IPrey _prey;
+FoeAttack[] _attacks;
 		int _next;
 		Coroutine _fight;
 		GameObject _warning;
@@ -109,6 +132,50 @@ namespace Temnorid.Legends
 
 		void OnEnable() => All.Add(this);
 		void OnDisable() => All.Remove(this);
+
+		/// <summary>Makes this copy only a picture of the host's foe: no walking, no fighting.</summary>
+		public void SetRemote(bool remote)
+		{
+			Remote = remote;
+			_attacks = Kind == FoeKind.Boss ? BossAttacks : CursedAttacks;
+			var agent = GetComponent<NavMeshAgent>();
+			if (remote && agent != null) agent.enabled = false;
+		}
+
+		/// <summary>Shows what the host says this foe is doing. <paramref name="packed"/> is the state with the attack index plus one above bit 4.</summary>
+		public void ShowRemote(int packed, float fraction)
+		{
+			if (!Remote || State == FoeState.Dead) return;
+			var state = (FoeState)(packed & 15);
+			var attack = (packed >> 4) - 1;
+			_remoteFraction = fraction;
+			if (state == FoeState.Dead)
+			{
+				RemoteDie();
+				return;
+			}
+			if (state == State) return;
+			if (State == FoeState.Windup) ClearWarning();
+			State = state;
+			CurrentAttack = attack >= 0 && attack < _attacks.Length ? _attacks[attack].Name : "";
+			if (state == FoeState.Windup && attack >= 0 && attack < _attacks.Length) ShowWarning(_attacks[attack]);
+			Lean(state == FoeState.Windup ? -25f : state == FoeState.Strike ? 35f : 0f);
+		}
+
+		/// <summary>A guest's copy falls over when the host's foe dies.</summary>
+		public void RemoteDie()
+		{
+			if (State == FoeState.Dead) return;
+			State = FoeState.Dead;
+			_remoteFraction = 0f;
+			CurrentAttack = "";
+			ClearWarning();
+			foreach (var collider in GetComponentsInChildren<Collider>()) collider.enabled = false;
+			StartCoroutine(Fall());
+		}
+
+		/// <summary>The state with the attack index plus one above bit 4, as the host publishes it.</summary>
+		public int PackedState => (int)State | ((AttackIndex + 1) << 4);
 
 		/// <summary>Applies <see cref="Kind"/> after the builder sets it (health and speed).</summary>
 		public void Configure(FoeKind kind)
@@ -160,13 +227,14 @@ namespace Temnorid.Legends
 				var stuck = 0f;
 				while (Distance() > reach)
 				{
-					if (_agent.isOnNavMesh) _agent.SetDestination(_hero.transform.position);
+					if (_agent.isOnNavMesh) _agent.SetDestination(PreyPosition());
 					// If it cannot get closer (a corner, the altar), it steps through to the hero's side rather than waiting forever.
 					stuck = _agent.velocity.sqrMagnitude < 0.04f ? stuck + Time.deltaTime : 0f;
 					if (stuck > 2.5f)
 					{
 						stuck = 0f;
-						var behind = _hero.transform.position + (transform.position - _hero.transform.position).normalized * (reach + 0.5f);
+						var at = PreyPosition();
+						var behind = at + (transform.position - at).normalized * (reach + 0.5f);
 						if (NavMesh.SamplePosition(behind, out var spot, 5f, NavMesh.AllAreas)) _agent.Warp(spot.position);
 					}
 					yield return null;
@@ -179,9 +247,31 @@ namespace Temnorid.Legends
 			}
 		}
 
+		/// <summary>The nearest living hero; the local hero when nobody is alive.</summary>
+		IPrey Pick()
+		{
+			IPrey best = null;
+			var bestDistance = float.MaxValue;
+			for (var i = 0; i < Prey.Count; i++)
+			{
+				var prey = Prey[i];
+				if (!prey.Alive) continue;
+				var d = (prey.Position - transform.position).sqrMagnitude;
+				if (d < bestDistance)
+				{
+					bestDistance = d;
+					best = prey;
+				}
+			}
+			return best ?? (IPrey)_hero;
+		}
+
+		Vector3 PreyPosition() => _prey.Position;
+
 		float Distance()
 		{
-			var to = _hero.transform.position - transform.position;
+			_prey = Pick();
+			var to = PreyPosition() - transform.position;
 			to.y = 0f;
 			return to.magnitude;
 		}
@@ -198,10 +288,12 @@ namespace Temnorid.Legends
 		{
 			State = FoeState.Windup;
 			CurrentAttack = attack.Name;
+				AttackIndex = Array.IndexOf(_attacks, attack);
 			_agent.isStopped = true;
 			_agent.ResetPath();
 
-			Face(_hero.transform.position, 1f);
+			_prey = Pick();
+			Face(PreyPosition(), 1f);
 			var dashDirection = transform.forward;
 			ShowWarning(attack);
 
@@ -210,7 +302,7 @@ namespace Temnorid.Legends
 				// Keeps aiming for most of the wind-up, then commits.
 				if (t < attack.Windup * 0.6f)
 				{
-					Face(_hero.transform.position, 10f * Time.deltaTime);
+					Face(PreyPosition(), 10f * Time.deltaTime);
 					dashDirection = transform.forward;
 				}
 				Lean(-Mathf.Sin(Mathf.Clamp01(t / attack.Windup) * 1.5f) * 25f);
@@ -229,14 +321,14 @@ namespace Temnorid.Legends
 						if (!hit && Distance() < 1.8f)
 						{
 							hit = true;
-							_hero.TakeHit(attack.Damage, transform.position, attack.BlockStrength);
+							_prey.Strike(attack.Damage, transform.position, attack.BlockStrength);
 						}
 						Lean(35f);
 						yield return null;
 					}
 					break;
 				default:
-					if (Lands(attack)) _hero.TakeHit(attack.Damage, transform.position, attack.BlockStrength);
+					if (Lands(attack)) _prey.Strike(attack.Damage, transform.position, attack.BlockStrength);
 					Fx.Pulse(PrimitiveType.Cylinder, transform.position + Vector3.up * 0.08f + transform.forward * (attack.Shape == Shape.Overhead ? 2.4f : 0f), Quaternion.identity,
 						Vector3.one * 0.5f, new Vector3(attack.Range * 2f, 0.02f, attack.Range * 2f), new Color(1f, 0.85f, 0.4f), 0.22f);
 					Lean(40f);
@@ -245,18 +337,20 @@ namespace Temnorid.Legends
 			}
 			Lean(0f);
 			CurrentAttack = "";
-		}
+			AttackIndex = -1;
+			}
 
-		/// <summary>Is the hero where this attack reaches at the moment of the blow?</summary>
+			/// <summary>Is the hero where this attack reaches at the moment of the blow?</summary>
 		bool Lands(FoeAttack attack)
 		{
-			var to = _hero.transform.position - transform.position;
+			var heroAt = PreyPosition();
+			var to = heroAt - transform.position;
 			to.y = 0f;
 			switch (attack.Shape)
 			{
 				case Shape.Overhead:
 					var centre = transform.position + transform.forward * 2.4f;
-					return Vector3.Distance(new Vector3(centre.x, 0f, centre.z), new Vector3(_hero.transform.position.x, 0f, _hero.transform.position.z)) <= attack.Range;
+					return Vector3.Distance(new Vector3(centre.x, 0f, centre.z), new Vector3(heroAt.x, 0f, heroAt.z)) <= attack.Range;
 				default:
 					return to.magnitude <= attack.Range && Vector3.Angle(transform.forward, to) <= attack.HalfAngle;
 			}
@@ -298,7 +392,7 @@ namespace Temnorid.Legends
 		void OnDamaged(Health health, DamageInfo info)
 		{
 			// A villager flinches and loses his attack; the guardian does not.
-			if (Kind != FoeKind.Cursed || State == FoeState.Dormant || State == FoeState.Dead || State == FoeState.Strike) return;
+			if (Remote || Kind != FoeKind.Cursed || State == FoeState.Dormant || State == FoeState.Dead || State == FoeState.Strike) return;
 			if (_fight != null) StopCoroutine(_fight);
 			ClearWarning();
 			_fight = StartCoroutine(Stagger());

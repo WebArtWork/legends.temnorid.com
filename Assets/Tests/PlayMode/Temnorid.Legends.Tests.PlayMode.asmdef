@@ -2,6 +2,8 @@
   "name": "Temnorid.Legends.Tests.PlayMode",
   "rootNamespace": "Temnorid.Legends.Tests",
   "references": [
+    "ITKamianets.Engine.Net",
+    "ITKamianets.Engine.Shell",
     "Temnorid.Legends",
     "ITKamianets.Engine.Inventory",
     "ITKamianets.Engine.Combat",

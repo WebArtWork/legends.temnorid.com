@@ -3,6 +3,7 @@ using ITKamianets.Engine.Combat;
 using ITKamianets.Engine.Feedback;
 using ITKamianets.Engine.Graybox;
 using ITKamianets.Engine.Graybox.EditorTools;
+using ITKamianets.Engine.Shell.Editor;
 using Unity.AI.Navigation;
 using UnityEditor;
 using UnityEditor.Build;
@@ -32,10 +33,8 @@ namespace Temnorid.Legends.EditorTools
 		[MenuItem("Temnorid/Legends/Build Scene")]
 		public static void Build()
 		{
-			PlayerSettings.productName = "Temnorid Legends";
-			PlayerSettings.companyName = "Temnorid";
-			PlayerSettings.bundleVersion = "0.1.0";
-			PlayerSettings.SetApplicationIdentifier(NamedBuildTarget.Standalone, "com.itkamianets.legends");
+			ShellSceneKit.ApplyPlatformSettings("Temnorid", "Temnorid Legends", "com.itkamianets.legends", "0.2.0");
+PlayerSettings.SetApplicationIdentifier(NamedBuildTarget.Standalone, "com.itkamianets.legends");
 			PlayerSettings.runInBackground = true;
 			PlayerSettings.fullScreenMode = FullScreenMode.FullScreenWindow;
 
@@ -88,7 +87,9 @@ namespace Temnorid.Legends.EditorTools
 			boss.gameObject.SetActive(false); // rises from the altar
 
 			EditorSceneManager.SaveScene(scene, ScenePath);
-			EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(ScenePath, true) };
+			ShellSceneKit.BuildBoot();
+			ShellSceneKit.BuildMenu();
+			ShellSceneKit.SetBuildOrder(ScenePath);
 			AssetDatabase.SaveAssets();
 			Debug.Log("[Legends] Scene built: " + ScenePath + " (" + villagerHut + ")");
 		}

@@ -37,6 +37,9 @@ namespace Temnorid.Legends
 		public float Height = 1.6f;
 		public float LookSensitivity = 1f;
 
+		/// <summary>Without a mouse the fighting camera turns by itself toward the foe (or where the hero faces). True on phones.</summary>
+		public bool AutoAim = Application.isMobilePlatform;
+
 		readonly List<CameraZone> _zones = new List<CameraZone>();
 		Camera _camera;
 		float _yaw;
@@ -130,9 +133,31 @@ namespace Temnorid.Legends
 			switch (Mode)
 			{
 				case CameraMode.Combat:
-					var look = EngineInput.Default.ReadLookDegrees();
-					_yaw += look.x * LookSensitivity;
-					_pitch = Mathf.Clamp(_pitch - look.y * LookSensitivity, -15f, 55f);
+					if (AutoAim)
+					{
+						var aim = Target.transform.eulerAngles.y;
+						Foe nearest = null;
+						var nearestDistance = 30f;
+						foreach (var foe in Foe.All)
+						{
+							if (!foe.Engaged) continue;
+							var d = Vector3.Distance(foe.transform.position, Target.transform.position);
+							if (d < nearestDistance) { nearest = foe; nearestDistance = d; }
+						}
+						if (nearest != null)
+						{
+							var to = nearest.transform.position - Target.transform.position;
+							aim = Mathf.Atan2(to.x, to.z) * Mathf.Rad2Deg;
+						}
+						_yaw = Mathf.MoveTowardsAngle(_yaw, aim, 160f * dt);
+						_pitch = Mathf.MoveTowards(_pitch, 14f, 60f * dt);
+					}
+					else
+					{
+						var look = EngineInput.Default.ReadLookDegrees();
+						_yaw += look.x * LookSensitivity;
+						_pitch = Mathf.Clamp(_pitch - look.y * LookSensitivity, -15f, 55f);
+					}
 					rotation = Quaternion.Euler(_pitch, _yaw, 0f);
 					var pivot = Target.transform.position + Vector3.up * Height + rotation * Vector3.right * Shoulder;
 					var back = -(rotation * Vector3.forward);

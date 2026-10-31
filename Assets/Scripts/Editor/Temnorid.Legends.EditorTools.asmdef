@@ -2,6 +2,9 @@
   "name": "Temnorid.Legends.EditorTools",
   "rootNamespace": "Temnorid.Legends.EditorTools",
   "references": [
+    "ITKamianets.Engine.Shell",
+    "ITKamianets.Engine.Shell.Editor",
+    "ITKamianets.Engine.Net",
     "Temnorid.Legends",
     "Unity.AI.Navigation",
     "ITKamianets.Engine.Combat",
