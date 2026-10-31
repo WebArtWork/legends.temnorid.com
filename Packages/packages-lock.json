@@ -1,5 +1,15 @@
 {
   "dependencies": {
+    "com.itkamianets.3d-unity-account": {
+      "version": "https://github.com/IT-Kamianets/3d-unity-account.git",
+      "depth": 0,
+      "source": "git",
+      "dependencies": {
+        "com.unity.modules.unitywebrequest": "1.0.0",
+        "com.unity.modules.jsonserialize": "1.0.0"
+      },
+      "hash": "eebaadbbfaf1fb15c80ec122fc7bbb724c9b2248"
+    },
     "com.itkamianets.3d-unity-combat": {
       "version": "https://github.com/IT-Kamianets/3d-unity-combat.git",
       "depth": 0,
