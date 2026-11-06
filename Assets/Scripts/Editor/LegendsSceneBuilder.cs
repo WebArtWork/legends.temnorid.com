@@ -1,4 +1,6 @@
 using System.Collections.Generic;
+using ITKamianets.Engine.Character;
+using ITKamianets.Engine.CharacterView;
 using ITKamianets.Engine.Combat;
 using ITKamianets.Engine.Feedback;
 using ITKamianets.Engine.Graybox;
@@ -24,7 +26,10 @@ namespace Temnorid.Legends.EditorTools
 	/// </summary>
 	public static class LegendsSceneBuilder
 	{
-		const string ScenePath = "Assets/Scenes/Main.unity";
+		/// <summary>The story: The Abandoned Village. The elder in the village starts it.</summary>
+		const string ScenePath = "Assets/Scenes/Story.unity";
+		/// <summary>The village where the game opens.</summary>
+		const string HomePath = "Assets/Scenes/Main.unity";
 		const string MaterialDir = "Assets/Materials";
 		const float Wall = 3.2f;
 
@@ -87,11 +92,71 @@ PlayerSettings.SetApplicationIdentifier(NamedBuildTarget.Standalone, "com.itkami
 			boss.gameObject.SetActive(false); // rises from the altar
 
 			EditorSceneManager.SaveScene(scene, ScenePath);
+			BuildHome();
 			ShellSceneKit.BuildBoot();
 			ShellSceneKit.BuildMenu();
-			ShellSceneKit.SetBuildOrder(ScenePath);
+			ShellSceneKit.SetBuildOrder(HomePath, ScenePath);
 			AssetDatabase.SaveAssets();
 			Debug.Log("[Legends] Scene built: " + ScenePath + " (" + villagerHut + ")");
+		}
+
+		/// <summary>The village scene: a wide ground, the warrior, the camera. The village and the elder are made when it starts, by <see cref="LegendsHome"/>.</summary>
+		static void BuildHome()
+		{
+			var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+			RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
+			RenderSettings.ambientLight = new Color(0.6f, 0.64f, 0.72f);
+
+			var world = new GameObject("World").transform;
+			GrayboxBuilder.Prim(PrimitiveType.Cube, "SafetyGround", world, new Vector3(0f, -0.8f, 0f), new Vector3(600f, 1f, 600f), GrayboxBuilder.Mat("HomeGrass", new Color(0.33f, 0.55f, 0.28f), MaterialDir), true);
+
+			var view = new GameObject("Village").AddComponent<Temnorid.Village.VillageView>();
+			view.LitTemplate = GrayboxBuilder.Mat("VillageLit", Color.white, MaterialDir);
+			view.TextMaterial = GrayboxBuilder.WorldTextMaterial(Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf"), MaterialDir);
+
+			// The warrior who is sent to the abandoned village.
+			var steel = GrayboxBuilder.Mat("HomeSteel", new Color(0.72f, 0.75f, 0.82f), MaterialDir);
+			var cloth = GrayboxBuilder.Mat("HomeCloth", new Color(0.55f, 0.18f, 0.14f), MaterialDir);
+			var skin = GrayboxBuilder.Mat("HomeSkin", new Color(0.88f, 0.7f, 0.55f), MaterialDir);
+			var player = new GameObject("Warrior");
+			player.transform.position = new Vector3(0f, 0.1f, 0f);
+			player.AddComponent<CharacterController>();
+			player.AddComponent<CharacterMotor>();
+			player.AddComponent<ITKamianets.Engine.CharacterView.CharacterViewControls>();
+			var body = new GameObject("Body").transform;
+			body.SetParent(player.transform, false);
+			GrayboxBuilder.Prim(PrimitiveType.Capsule, "Torso", body, new Vector3(0f, 0.9f, 0f), new Vector3(0.7f, 0.9f, 0.7f), cloth);
+			GrayboxBuilder.Prim(PrimitiveType.Cube, "Mail", body, new Vector3(0f, 1.1f, 0f), new Vector3(0.78f, 0.5f, 0.5f), steel);
+			GrayboxBuilder.Prim(PrimitiveType.Sphere, "Head", body, new Vector3(0f, 1.62f, 0.02f), new Vector3(0.38f, 0.38f, 0.38f), skin);
+			GrayboxBuilder.Prim(PrimitiveType.Cube, "Blade", body, new Vector3(0.5f, 1.0f, 0.45f), new Vector3(0.08f, 0.08f, 1.1f), steel);
+
+			var cameraObject = new GameObject("Main Camera") { tag = "MainCamera" };
+			var camera = cameraObject.AddComponent<Camera>();
+			camera.clearFlags = CameraClearFlags.SolidColor;
+			camera.backgroundColor = new Color(0.56f, 0.72f, 0.9f);
+			camera.fieldOfView = 68f;
+			camera.nearClipPlane = 0.1f;
+			camera.farClipPlane = 400f;
+			cameraObject.AddComponent<AudioListener>();
+			var cameraView = cameraObject.AddComponent<CharacterViewCamera>();
+			var serialized = new SerializedObject(cameraView);
+			serialized.FindProperty("target").objectReferenceValue = player.GetComponent<CharacterMotor>();
+			serialized.FindProperty("settings.StartView").enumValueIndex = (int)CameraView.ThirdPerson;
+			serialized.FindProperty("settings.Distance").floatValue = 4.8f;
+			serialized.ApplyModifiedPropertiesWithoutUndo();
+
+			var sun = new GameObject("Sun");
+			sun.transform.rotation = Quaternion.Euler(50f, -30f, 0f);
+			var light = sun.AddComponent<Light>();
+			light.type = LightType.Directional;
+			light.intensity = 1.15f;
+			light.shadows = LightShadows.Soft;
+
+			var home = new GameObject("Game").AddComponent<LegendsHome>();
+			home.View = view;
+			home.Hero = player.GetComponent<CharacterMotor>();
+			home.TextMaterial = view.TextMaterial;
+			EditorSceneManager.SaveScene(scene, HomePath);
 		}
 
 		static void MakeMaterials()

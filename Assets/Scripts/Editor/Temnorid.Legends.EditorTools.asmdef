@@ -10,7 +10,11 @@
     "ITKamianets.Engine.Combat",
     "ITKamianets.Engine.Feedback",
     "ITKamianets.Engine.Graybox",
-    "ITKamianets.Engine.Graybox.Editor"
+    "ITKamianets.Engine.Graybox.Editor",
+    "ITKamianets.Engine.Character",
+    "ITKamianets.Engine.CharacterView.Camera",
+    "ITKamianets.Engine.CharacterView.Controls",
+    "Temnorid.Village"
   ],
   "includePlatforms": [
     "Editor"

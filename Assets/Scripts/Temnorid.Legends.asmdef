@@ -15,7 +15,10 @@
     "UnityEngine.UI",
     "ITKamianets.Engine.Feedback",
     "ITKamianets.Engine.Graybox",
-    "ITKamianets.Engine.UI"
+    "ITKamianets.Engine.UI",
+    "ITKamianets.Engine.Character",
+    "ITKamianets.Engine.Account",
+    "Temnorid.Village"
   ],
   "includePlatforms": [],
   "excludePlatforms": [],

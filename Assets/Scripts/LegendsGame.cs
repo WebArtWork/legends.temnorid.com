@@ -277,12 +277,13 @@ Rig.SetMode(CameraMode.Exploration);
 			ShowToast("You rise again at the last checkpoint.");
 		}
 
-		/// <summary>Leaves for the shell's menu, saving first.</summary>
+		/// <summary>Leaves the story for the village, where it began (the shell's menu is not used: the game opens in the village).</summary>
 		public void BackToMenu()
 		{
 			AutoContinue = false;
 			Time.timeScale = 1f;
-			ShellFlow.QuitToMenu();
+			if (Net != null) ShellFlow.QuitToMenu();
+			else SceneManager.LoadScene(LegendsHome.HomeScene);
 		}
 
 		public void Save()

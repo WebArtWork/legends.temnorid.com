@@ -19,14 +19,13 @@ namespace Temnorid.Legends
 				Repo = Repo,
 				InstallerSuffix = "-Setup.exe",
 				MaxPlayers = 2,
-				Multiplayer = true,
+				// One player: sign in, then straight into the village, where an elder starts the story. No landing screen, no lobby,
+				// no Profile for now.
+				Multiplayer = false,
+				Profile = false,
+				SkipLanding = true,
 				GameScene = "Main",
 				Accent = new Color(0.92f, 0.62f, 0.25f),
-				Places =
-				{
-					new ShellPlace("village", "Village", "V"),
-					new ShellPlace("journal", "Journal", "J"),
-				},
 			};
 		}
 	}
