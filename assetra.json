@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "1.0.0",
+  "libraryId": "legends-temnorid",
+  "units": "meters",
+  "metadata": {
+    "tags": [
+      "assetra"
+    ],
+    "properties": {
+      "assetra": {
+        "format": 1,
+        "project": "legends-temnorid",
+        "name": "Temnorid Legends",
+        "modelsDir": "Assets/Models"
+      }
+    }
+  },
+  "assets": []
+}
